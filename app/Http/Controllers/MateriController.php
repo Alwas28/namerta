@@ -141,16 +141,14 @@ class MateriController extends Controller
                 ->where('id_materi', $materialId)
                 ->first();
         } else {
-            // Untuk siswa, ambil eksplorasi konsep yang dibuat oleh guru (bukan milik siswa)
+            // Untuk siswa, ambil eksplorasi konsep milik materi ini.
+            // Data eksplorasi_konsep selalu 1 baris per id_materi dan hanya bisa
+            // dibuat/diubah guru (updateEksplorasiKonsep dijaga hasManageAccess),
+            // jadi tidak perlu filter role — filter lama gagal saat guru tidak
+            // punya baris di user_roles sehingga materi tidak tampil ke siswa.
             $eksplorasiKonsep = DB::table('eksplorasi_konsep')
                 ->where('id_materi', $materialId)
-                ->whereIn('id_user', function($query) {
-                    $query->select('u.id_user')
-                        ->from('users as u')
-                        ->join('user_roles as ur', 'u.id_user', '=', 'ur.id_user')
-                        ->join('roles as r', 'ur.id_role', '=', 'r.id_role')
-                        ->where('r.nama_role', 'guru');
-                })
+                ->orderByDesc('id_eksplorasi_konsep')
                 ->first();
         }
 
