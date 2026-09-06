@@ -62,6 +62,130 @@ class MateriLihatController extends Controller
     }
     
     /**
+     * Bangun data dashboard analisis jawaban & progres siswa untuk satu materi,
+     * dibatasi hanya siswa kelas (course) ini.
+     */
+    private function buildDashboard($courseId, $materialId)
+    {
+        $students = DB::table('siswa_kelas')
+            ->join('kelas_mp', 'kelas_mp.id_kelas_ta', '=', 'siswa_kelas.id_kelas_ta')
+            ->join('users', 'users.id_user', '=', 'siswa_kelas.id_user')
+            ->leftJoin('profile', 'profile.id_user', '=', 'users.id_user')
+            ->where('kelas_mp.id_kelas_mp', $courseId)
+            ->where('siswa_kelas.aktif', 'Y')
+            ->select('users.id_user', 'users.username', DB::raw('COALESCE(profile.nama, users.username) as nama'))
+            ->orderBy('nama')
+            ->get();
+
+        $studentIds = $students->pluck('id_user')->all();
+        $total = count($studentIds);
+
+        // Komponen berbasis jawaban file
+        $fileComponents = [
+            'mulai_dari_diri'        => 'Mulai Dari Diri',
+            'ruang_kolaborasi'       => 'Ruang Kolaborasi',
+            'demonstrasi_konseptual' => 'Demonstrasi Konseptual',
+            'elaborasi_pemahaman'    => 'Elaborasi Pemahaman',
+        ];
+
+        $answers = [];
+        foreach ($fileComponents as $key => $label) {
+            $answers[$key] = $total
+                ? DB::table('jawaban_' . $key)
+                    ->where('id_materi', $materialId)
+                    ->whereIn('id_user', $studentIds)
+                    ->get()
+                    ->keyBy('id_user')
+                : collect();
+        }
+
+        $checklists = $total
+            ? DB::table('checklist_materi')
+                ->where('id_materi', $materialId)
+                ->whereIn('id_user', $studentIds)
+                ->get()
+                ->keyBy('id_user')
+            : collect();
+
+        // Ringkasan per komponen
+        $components = [];
+        foreach ($fileComponents as $key => $label) {
+            $rows     = $answers[$key];
+            $answered = $rows->count();
+            $graded   = $rows->filter(fn ($r) => $r->nilai !== null)->count();
+            $avg      = $rows->filter(fn ($r) => $r->nilai !== null)->avg('nilai');
+
+            $components[] = [
+                'key'          => $key,
+                'label'        => $label,
+                'answered'     => $answered,
+                'not_answered' => max($total - $answered, 0),
+                'graded'       => $graded,
+                'not_graded'   => max($answered - $graded, 0),
+                'avg'          => $avg !== null ? round($avg, 1) : null,
+            ];
+        }
+
+        // Eksplorasi Konsep dinilai dari checklist (tidak ada jawaban file)
+        $ekDone = $checklists->filter(fn ($c) => ($c->eksplorasi_konsep ?? 'N') === 'Y')->count();
+        $components[] = [
+            'key'          => 'eksplorasi_konsep',
+            'label'        => 'Eksplorasi Konsep',
+            'answered'     => $ekDone,
+            'not_answered' => max($total - $ekDone, 0),
+            'graded'       => null,
+            'not_graded'   => null,
+            'avg'          => null,
+        ];
+
+        // Progres per siswa
+        $checklistKeys = [
+            'mulai_dari_diri', 'eksplorasi_konsep', 'ruang_kolaborasi',
+            'demonstrasi_konseptual', 'elaborasi_pemahaman',
+        ];
+        $progress = [];
+        foreach ($students as $s) {
+            $cl    = $checklists->get($s->id_user);
+            $done  = 0;
+            $cells = [];
+            foreach ($checklistKeys as $ck) {
+                $isDone = $cl && (($cl->$ck ?? 'N') === 'Y');
+                if ($isDone) {
+                    $done++;
+                }
+                $cell = ['done' => $isDone, 'answered' => null, 'nilai' => null];
+                if (isset($answers[$ck])) {
+                    $a = $answers[$ck]->get($s->id_user);
+                    $cell['answered'] = (bool) $a;
+                    $cell['nilai']    = $a->nilai ?? null;
+                }
+                $cells[$ck] = $cell;
+            }
+            $progress[] = [
+                'id_user' => $s->id_user,
+                'nama'    => $s->nama,
+                'cells'   => $cells,
+                'done'    => $done,
+                'percent' => count($checklistKeys) ? round($done / count($checklistKeys) * 100) : 0,
+            ];
+        }
+
+        $progressCol = collect($progress);
+
+        return [
+            'total_siswa'    => $total,
+            'components'     => $components,
+            'progress'       => $progress,
+            'checklist_keys' => $checklistKeys,
+            'avg_progress'   => $total ? round($progressCol->avg('percent')) : 0,
+            'fully_done'     => $progressCol->where('done', count($checklistKeys))->count(),
+            'not_started'    => $progressCol->where('done', 0)->count(),
+            'sudah_dinilai'  => collect($components)->sum(fn ($c) => (int) $c['graded']),
+            'perlu_dinilai'  => collect($components)->sum(fn ($c) => (int) $c['not_graded']),
+        ];
+    }
+
+    /**
      * Display materi page
      */
     public function index($courseId, $materialId)
@@ -125,7 +249,12 @@ class MateriLihatController extends Controller
         if ($isStudent) {
             $data['jawabanPRE'] = $this->getJawabanPRE($materialId, $userId);
         }
-        
+
+        // Dashboard analisis untuk guru
+        if ($isTeacher) {
+            $data['dashboard'] = $this->buildDashboard($courseId, $materialId);
+        }
+
         return view('mata_pelajaran.materi_lihat', $data);
     }
     

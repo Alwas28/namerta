@@ -310,6 +310,148 @@
             @endif
         </div>
 
+        @if($isTeacher && isset($dashboard))
+        @php $d = $dashboard; @endphp
+        @php
+            $compLabels = [
+                'mulai_dari_diri' => 'MDD', 'eksplorasi_konsep' => 'EK', 'ruang_kolaborasi' => 'RK',
+                'demonstrasi_konseptual' => 'DK', 'elaborasi_pemahaman' => 'EP',
+            ];
+        @endphp
+        <!-- Dashboard Analisis (Guru) -->
+        <div class="bg-white rounded-lg shadow-sm p-6 mb-6">
+            <div class="flex items-center justify-between mb-4">
+                <h2 class="text-lg font-bold text-gray-900">Dashboard Analisis Jawaban &amp; Progres Siswa</h2>
+                <button type="button" onclick="toggleDashboard()" id="dashToggleBtn"
+                        class="text-sm text-blue-600 hover:underline">Sembunyikan</button>
+            </div>
+
+            <div id="dashBody">
+                <!-- Kartu ringkasan -->
+                <div class="grid grid-cols-2 md:grid-cols-5 gap-3 mb-6">
+                    <div class="rounded-lg border border-gray-200 p-3 text-center">
+                        <div class="text-2xl font-bold text-gray-900">{{ $d['total_siswa'] }}</div>
+                        <div class="text-xs text-gray-500 mt-1">Total Siswa</div>
+                    </div>
+                    <div class="rounded-lg border border-blue-200 bg-blue-50 p-3 text-center">
+                        <div class="text-2xl font-bold text-blue-700">{{ $d['avg_progress'] }}%</div>
+                        <div class="text-xs text-blue-600 mt-1">Rata-rata Progres</div>
+                    </div>
+                    <div class="rounded-lg border border-green-200 bg-green-50 p-3 text-center">
+                        <div class="text-2xl font-bold text-green-700">{{ $d['fully_done'] }}</div>
+                        <div class="text-xs text-green-600 mt-1">Tuntas 5/5</div>
+                    </div>
+                    <div class="rounded-lg border border-gray-200 p-3 text-center">
+                        <div class="text-2xl font-bold text-gray-700">{{ $d['not_started'] }}</div>
+                        <div class="text-xs text-gray-500 mt-1">Belum Mulai</div>
+                    </div>
+                    <div class="rounded-lg border border-amber-200 bg-amber-50 p-3 text-center">
+                        <div class="text-2xl font-bold text-amber-700">{{ $d['perlu_dinilai'] }}</div>
+                        <div class="text-xs text-amber-600 mt-1">Jawaban Perlu Dinilai</div>
+                    </div>
+                </div>
+
+                <!-- Ringkasan per komponen -->
+                <h3 class="text-sm font-semibold text-gray-700 mb-2">Ringkasan per Komponen</h3>
+                <div class="overflow-x-auto mb-6">
+                    <table class="w-full text-sm border border-gray-200">
+                        <thead class="bg-gray-50 text-gray-600">
+                            <tr>
+                                <th class="text-left px-3 py-2 border-b">Komponen</th>
+                                <th class="text-center px-3 py-2 border-b">Sudah Jawab</th>
+                                <th class="text-center px-3 py-2 border-b">Belum Jawab</th>
+                                <th class="text-center px-3 py-2 border-b">Sudah Dinilai</th>
+                                <th class="text-center px-3 py-2 border-b">Belum Dinilai</th>
+                                <th class="text-center px-3 py-2 border-b">Rata-rata Nilai</th>
+                            </tr>
+                        </thead>
+                        <tbody>
+                            @foreach($d['components'] as $c)
+                            <tr class="border-b last:border-0">
+                                <td class="px-3 py-2 font-medium text-gray-800">{{ $c['label'] }}</td>
+                                <td class="text-center px-3 py-2">
+                                    <span class="text-green-700 font-semibold">{{ $c['answered'] }}</span>
+                                    <span class="text-gray-400">/ {{ $d['total_siswa'] }}</span>
+                                </td>
+                                <td class="text-center px-3 py-2 {{ $c['not_answered'] > 0 ? 'text-red-600 font-semibold' : 'text-gray-400' }}">
+                                    {{ $c['not_answered'] }}
+                                </td>
+                                <td class="text-center px-3 py-2">{{ is_null($c['graded']) ? '—' : $c['graded'] }}</td>
+                                <td class="text-center px-3 py-2 {{ !is_null($c['not_graded']) && $c['not_graded'] > 0 ? 'text-amber-600 font-semibold' : 'text-gray-400' }}">
+                                    {{ is_null($c['not_graded']) ? '—' : $c['not_graded'] }}
+                                </td>
+                                <td class="text-center px-3 py-2 font-semibold text-gray-800">
+                                    {{ is_null($c['avg']) ? '—' : $c['avg'] }}
+                                </td>
+                            </tr>
+                            @endforeach
+                        </tbody>
+                    </table>
+                </div>
+
+                <!-- Progres per siswa -->
+                <div class="flex items-center justify-between mb-2">
+                    <h3 class="text-sm font-semibold text-gray-700">Progres per Siswa</h3>
+                    <input type="text" id="dashStudentFilter" onkeyup="filterDashStudents()"
+                           placeholder="Cari nama siswa..."
+                           class="text-sm border border-gray-300 rounded px-2 py-1 w-56">
+                </div>
+                <div class="overflow-x-auto">
+                    <table class="w-full text-sm border border-gray-200" id="dashStudentTable">
+                        <thead class="bg-gray-50 text-gray-600">
+                            <tr>
+                                <th class="text-left px-3 py-2 border-b w-8">#</th>
+                                <th class="text-left px-3 py-2 border-b">Nama Siswa</th>
+                                @foreach($d['checklist_keys'] as $ck)
+                                    <th class="text-center px-2 py-2 border-b" title="{{ $ck }}">{{ $compLabels[$ck] ?? $ck }}</th>
+                                @endforeach
+                                <th class="text-center px-3 py-2 border-b w-40">Progres</th>
+                            </tr>
+                        </thead>
+                        <tbody>
+                            @foreach($d['progress'] as $i => $row)
+                            <tr class="border-b last:border-0 dash-student-row" data-nama="{{ strtolower($row['nama']) }}">
+                                <td class="px-3 py-2 text-gray-400">{{ $i + 1 }}</td>
+                                <td class="px-3 py-2 font-medium text-gray-800">{{ $row['nama'] }}</td>
+                                @foreach($d['checklist_keys'] as $ck)
+                                    @php $cell = $row['cells'][$ck]; @endphp
+                                    <td class="text-center px-2 py-2">
+                                        @if(!is_null($cell['nilai']))
+                                            <span class="inline-block min-w-[2rem] px-1.5 py-0.5 rounded bg-green-100 text-green-800 font-semibold">{{ $cell['nilai'] }}</span>
+                                        @elseif($cell['done'])
+                                            <span class="inline-block px-1.5 py-0.5 rounded bg-green-100 text-green-700" title="Selesai">&#10003;</span>
+                                        @elseif($cell['answered'])
+                                            <span class="inline-block px-1.5 py-0.5 rounded bg-amber-100 text-amber-700" title="Sudah jawab, belum dinilai">&#9679;</span>
+                                        @else
+                                            <span class="inline-block px-1.5 py-0.5 rounded bg-gray-100 text-gray-400" title="Belum">&ndash;</span>
+                                        @endif
+                                    </td>
+                                @endforeach
+                                <td class="px-3 py-2">
+                                    <div class="flex items-center gap-2">
+                                        <div class="flex-1 bg-gray-200 rounded-full h-2">
+                                            <div class="h-2 rounded-full {{ $row['percent'] == 100 ? 'bg-green-600' : 'bg-blue-600' }}"
+                                                 style="width: {{ $row['percent'] }}%"></div>
+                                        </div>
+                                        <span class="text-xs text-gray-600 w-12 text-right">{{ $row['done'] }}/{{ count($d['checklist_keys']) }}</span>
+                                    </div>
+                                </td>
+                            </tr>
+                            @endforeach
+                            @if(count($d['progress']) === 0)
+                            <tr><td colspan="{{ count($d['checklist_keys']) + 3 }}" class="text-center px-3 py-4 text-gray-500">Belum ada siswa terdaftar di kelas ini.</td></tr>
+                            @endif
+                        </tbody>
+                    </table>
+                </div>
+                <p class="text-xs text-gray-500 mt-2">
+                    Keterangan: angka = nilai &nbsp;·&nbsp; &#10003; = selesai &nbsp;·&nbsp; &#9679; = sudah jawab belum dinilai &nbsp;·&nbsp; &ndash; = belum.
+                    MDD=Mulai Dari Diri, EK=Eksplorasi Konsep, RK=Ruang Kolaborasi, DK=Demonstrasi Konseptual, EP=Elaborasi Pemahaman.
+                </p>
+            </div>
+        </div>
+        @endif
+
         <!-- Main Content -->
         <div class="space-y-6">
             <!-- Component 1: Mulai Dari Diri -->
@@ -607,6 +749,23 @@ function getGradeClass(nilai) {
     if (nilai >= 75) return 'good';
     if (nilai >= 65) return 'fair';
     return 'poor';
+}
+
+function toggleDashboard() {
+    var body = document.getElementById('dashBody');
+    var btn = document.getElementById('dashToggleBtn');
+    if (!body) return;
+    var hidden = body.hasAttribute('hidden');
+    if (hidden) { body.removeAttribute('hidden'); btn.textContent = 'Sembunyikan'; }
+    else { body.setAttribute('hidden', ''); btn.textContent = 'Tampilkan'; }
+}
+
+function filterDashStudents() {
+    var q = (document.getElementById('dashStudentFilter').value || '').toLowerCase().trim();
+    document.querySelectorAll('#dashStudentTable .dash-student-row').forEach(function (row) {
+        var nama = row.getAttribute('data-nama') || '';
+        row.style.display = (q === '' || nama.indexOf(q) !== -1) ? '' : 'none';
+    });
 }
 
 function exportNilai(component) {
