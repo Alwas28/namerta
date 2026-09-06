@@ -12,10 +12,67 @@ use Illuminate\Support\Facades\DB;
 
 class UserController extends Controller
 {
-    public function index()
+    /**
+     * Pemetaan status profil -> id_role pada tabel `roles`.
+     */
+    private const ROLE_MAP = [
+        'guru'   => 3,
+        'siswa'  => 4,
+        'tendik' => 5,
+    ];
+
+    private const ROLE_SUPER_ADMIN = 1;
+
+    /**
+     * Samakan isi tabel user_roles dengan status profil + flag is_admin user.
+     * Dipakai saat membuat / mengubah user supaya menu & pengecekan role
+     * (Auth::user()->hasRole(...)) tidak pernah kosong untuk user baru.
+     */
+    private function syncUserRole($userId, string $status, string $isAdmin): void
     {
-        $users = User::with('profile.sekolah')->paginate(10);
-        return view('users.index', compact('users'));
+        $roleIds = [];
+
+        if (isset(self::ROLE_MAP[$status])) {
+            $roleIds[] = self::ROLE_MAP[$status];
+        }
+
+        if ($isAdmin === 'Y') {
+            $roleIds[] = self::ROLE_SUPER_ADMIN;
+        }
+
+        // Delete-then-insert supaya selalu sinkron dan tidak ada baris ganda.
+        DB::table('user_roles')->where('id_user', $userId)->delete();
+
+        foreach (array_unique($roleIds) as $roleId) {
+            DB::table('user_roles')->insert([
+                'id_user'    => $userId,
+                'id_role'    => $roleId,
+                'created_at' => now(),
+            ]);
+        }
+    }
+
+    public function index(Request $request)
+    {
+        $search = trim($request->input('search', ''));
+
+        $users = User::with('profile.sekolah')
+            ->when($search !== '', function ($query) use ($search) {
+                $query->where(function ($q) use ($search) {
+                    $q->where('username', 'like', "%{$search}%")
+                        ->orWhereHas('profile', function ($p) use ($search) {
+                            $p->where('nama', 'like', "%{$search}%")
+                                ->orWhere('id_status', 'like', "%{$search}%")
+                                ->orWhereHas('sekolah', function ($s) use ($search) {
+                                    $s->where('nama_sekolah', 'like', "%{$search}%");
+                                });
+                        });
+                });
+            })
+            ->paginate(10)
+            ->withQueryString();
+
+        return view('users.index', compact('users', 'search'));
     }
 
     public function create()
@@ -62,6 +119,9 @@ class UserController extends Controller
                 'status' => $request->id_status,
                 'id_status' => $request->id_status
             ]);
+
+            // Assign role sesuai status supaya user langsung dikenali sistem
+            $this->syncUserRole($user->id_user, $request->id_status, $request->is_admin ?? 'N');
 
             DB::commit();
             return redirect()->route('users.index')->with('success', 'User berhasil ditambahkan');
@@ -121,6 +181,9 @@ class UserController extends Controller
                 'id_status' => $request->id_status
             ]);
 
+            // Jaga tabel user_roles tetap sinkron dengan status & is_admin terbaru
+            $this->syncUserRole($user->id_user, $request->id_status, $request->is_admin ?? 'N');
+
             DB::commit();
             return redirect()->route('users.index')->with('success', 'User berhasil diupdate');
         } catch (\Exception $e) {
@@ -134,12 +197,15 @@ class UserController extends Controller
         DB::beginTransaction();
         try {
             $user = User::findOrFail($id);
-            
+
             // Delete profile first
             if ($user->profile) {
                 $user->profile->delete();
             }
-            
+
+            // Bersihkan role user
+            DB::table('user_roles')->where('id_user', $id)->delete();
+
             // Then delete user
             $user->delete();
             

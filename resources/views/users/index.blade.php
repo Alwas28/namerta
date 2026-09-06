@@ -21,6 +21,28 @@
                     </a>
                 </div>
             </div>
+
+            <!-- Search -->
+            <form method="GET" action="{{ route('users.index') }}" class="mt-4 flex items-center gap-2">
+                <div class="relative flex-1 max-w-md">
+                    <span class="absolute inset-y-0 left-0 flex items-center pl-3 text-gray-400">
+                        <i class="fas fa-search"></i>
+                    </span>
+                    <input type="text" name="search" value="{{ $search }}"
+                        placeholder="Cari email, nama, role, atau sekolah..."
+                        class="w-full pl-10 pr-3 py-2 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500">
+                </div>
+                <button type="submit"
+                    class="bg-blue-500 hover:bg-blue-600 text-white font-semibold py-2 px-4 rounded-lg transition-colors">
+                    Cari
+                </button>
+                @if($search !== '')
+                    <a href="{{ route('users.index') }}"
+                        class="bg-gray-200 hover:bg-gray-300 text-gray-700 font-semibold py-2 px-4 rounded-lg transition-colors">
+                        Reset
+                    </a>
+                @endif
+            </form>
         </div>
 
 
@@ -91,7 +113,7 @@
                     @empty
                     <tr>
                         <td colspan="7" class="px-6 py-4 text-center text-gray-500">
-                            Tidak ada data user
+                            {{ $search !== '' ? 'Tidak ada user yang cocok dengan pencarian "'.$search.'"' : 'Tidak ada data user' }}
                         </td>
                     </tr>
                     @endforelse
