@@ -728,9 +728,10 @@ class MateriController extends Controller
             return redirect()->back()->with('error', 'Unauthorized');
         }
 
-        // Validasi input
+        // Validasi input. isi_materi tidak wajib supaya guru bisa menyimpan
+        // eksplorasi konsep yang hanya berupa PDF dan/atau video.
         $request->validate([
-            'isi_materi' => 'required|string',
+            'isi_materi' => 'nullable|string',
             'pdf_file' => 'nullable|file|mimes:pdf|max:10240',
             'video_link' => 'nullable|url|max:500',
             'video_link2' => 'nullable|url|max:500',
@@ -738,13 +739,22 @@ class MateriController extends Controller
         ]);
 
         $userId = Auth::id();
-        
-        try {
-            // Cek apakah sudah ada data berdasarkan id_materi
-            $existing = DB::table('eksplorasi_konsep')
-                ->where('id_materi', $materialId)
-                ->first();
 
+        // Cek apakah sudah ada data berdasarkan id_materi
+        $existing = DB::table('eksplorasi_konsep')
+            ->where('id_materi', $materialId)
+            ->first();
+
+        // Minimal salah satu konten harus terisi (teks / PDF baru / video / PDF lama)
+        if (! $request->filled('isi_materi')
+            && ! $request->hasFile('pdf_file')
+            && ! $request->filled('video_link')
+            && ! ($existing && $existing->pdf)) {
+            return redirect()->back()
+                ->with('error', 'Isi minimal salah satu: konten materi, PDF, atau link video.');
+        }
+
+        try {
             // Siapkan data untuk disimpan
             $data = [
                 'isi_materi' => $request->isi_materi,
