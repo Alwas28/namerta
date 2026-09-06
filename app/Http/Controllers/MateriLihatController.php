@@ -37,13 +37,28 @@ class MateriLihatController extends Controller
     private function isStudent($courseId)
     {
         $userId = Auth::user()->id_user;
-        
+
         return DB::table('kelas_mp')
             ->join('siswa_kelas', 'kelas_mp.id_kelas_ta', '=', 'siswa_kelas.id_kelas_ta')
             ->where('kelas_mp.id_kelas_mp', $courseId)
             ->where('siswa_kelas.id_user', $userId)
             ->where('siswa_kelas.aktif', 'Y')
             ->exists();
+    }
+
+    /**
+     * Daftar id_user siswa yang terdaftar aktif di kelas (course) ini.
+     * Dipakai untuk membatasi daftar penilaian hanya ke siswa kelas ini,
+     * karena satu materi bisa dipakai beberapa kelas (mata pelajaran sama).
+     */
+    private function studentIdsForCourse($courseId)
+    {
+        return DB::table('siswa_kelas')
+            ->join('kelas_mp', 'kelas_mp.id_kelas_ta', '=', 'siswa_kelas.id_kelas_ta')
+            ->where('kelas_mp.id_kelas_mp', $courseId)
+            ->where('siswa_kelas.aktif', 'Y')
+            ->pluck('siswa_kelas.id_user')
+            ->all();
     }
     
     /**
@@ -243,17 +258,20 @@ class MateriLihatController extends Controller
         
         $component = $request->get('component');
         $type = $request->get('type', null);
-        
+
+        // Batasi hanya ke siswa kelas (course) ini
+        $studentIds = $this->studentIdsForCourse($courseId);
+
         try {
             if ($type) {
                 // Get PRE answers
-                $answers = $this->getPREAnswersForGrading($materialId, $component, $type);
+                $answers = $this->getPREAnswersForGrading($materialId, $component, $type, $studentIds);
             } else if ($component === 'metakognisi') {
                 // Get metakognisi answers
-                $answers = $this->getMetakognisiAnswersForGrading($materialId);
+                $answers = $this->getMetakognisiAnswersForGrading($materialId, $studentIds);
             } else {
                 // Get regular component answers
-                $answers = $this->getRegularAnswersForGrading($materialId, $component);
+                $answers = $this->getRegularAnswersForGrading($materialId, $component, $studentIds);
             }
             
             return response()->json([
@@ -278,7 +296,7 @@ class MateriLihatController extends Controller
     /**
      * Get regular component answers for grading
      */
-    private function getRegularAnswersForGrading($materialId, $component)
+    private function getRegularAnswersForGrading($materialId, $component, array $studentIds = null)
     {
         $componentMapping = [
             'mulai_dari_diri' => [
@@ -310,6 +328,9 @@ class MateriLihatController extends Controller
             ->join('users', $table . '.id_user', '=', 'users.id_user')
             ->join('profile', 'users.id_user', '=', 'profile.id_user')
             ->where($table . '.id_materi', $materialId)
+            ->when(is_array($studentIds), function ($q) use ($table, $studentIds) {
+                $q->whereIn($table . '.id_user', $studentIds);
+            })
             ->select(
                 $table . '.' . $pk . ' as id',
                 $table . '.jawaban',
@@ -321,11 +342,11 @@ class MateriLihatController extends Controller
             ->orderBy($table . '.created_at', 'desc')
             ->get();
     }
-    
+
     /**
      * Get PRE answers for grading
      */
-    private function getPREAnswersForGrading($materialId, $component, $type)
+    private function getPREAnswersForGrading($materialId, $component, $type, array $studentIds = null)
     {
         return DB::table('jawaban_perencanaan_refleksi_evaluasi')
             ->join('users', 'jawaban_perencanaan_refleksi_evaluasi.id_user', '=', 'users.id_user')
@@ -333,6 +354,9 @@ class MateriLihatController extends Controller
             ->where('jawaban_perencanaan_refleksi_evaluasi.id_materi', $materialId)
             ->where('jawaban_perencanaan_refleksi_evaluasi.jenis', $component)
             ->whereNotNull('jawaban_perencanaan_refleksi_evaluasi.' . $type)
+            ->when(is_array($studentIds), function ($q) use ($studentIds) {
+                $q->whereIn('jawaban_perencanaan_refleksi_evaluasi.id_user', $studentIds);
+            })
             ->select(
                 'jawaban_perencanaan_refleksi_evaluasi.id_jawaban_perencanaan_refleksi_evaluasi as id',
                 'jawaban_perencanaan_refleksi_evaluasi.' . $type . ' as jawaban',
@@ -348,20 +372,23 @@ class MateriLihatController extends Controller
     /**
      * Get metakognisi answers for grading
      */
-    private function getMetakognisiAnswersForGrading($materialId)
+    private function getMetakognisiAnswersForGrading($materialId, array $studentIds = null)
     {
         $eksplorasiKonsep = DB::table('eksplorasi_konsep')
             ->where('id_materi', $materialId)
             ->first();
-            
+
         if (!$eksplorasiKonsep) {
             return [];
         }
-        
+
         return DB::table('jawaban_pengetahuan_metakognisi')
             ->join('users', 'jawaban_pengetahuan_metakognisi.id_user', '=', 'users.id_user')
             ->join('profile', 'users.id_user', '=', 'profile.id_user')
             ->where('jawaban_pengetahuan_metakognisi.id_eksplorasi_konsep', $eksplorasiKonsep->id_eksplorasi_konsep)
+            ->when(is_array($studentIds), function ($q) use ($studentIds) {
+                $q->whereIn('jawaban_pengetahuan_metakognisi.id_user', $studentIds);
+            })
             ->select(
                 'jawaban_pengetahuan_metakognisi.id_jawaban_pengetahuan_metakognisi as id',
                 'jawaban_pengetahuan_metakognisi.deklaratif',
@@ -399,16 +426,19 @@ class MateriLihatController extends Controller
             $type = $request->type;
             $answerId = $request->answer_id;
             $nilai = $request->nilai;
-            
+
+            // Hanya boleh menilai jawaban milik siswa kelas ini
+            $studentIds = $this->studentIdsForCourse($courseId);
+
             if ($type && in_array($type, ['perencanaan', 'refleksi', 'evaluasi'])) {
                 // Update PRE grade
-                $this->updatePREGrade($answerId, $type, $nilai);
+                $this->updatePREGrade($answerId, $type, $nilai, $studentIds);
             } else if (in_array($type, ['deklaratif', 'prosedural', 'kondisional'])) {
                 // Update metakognisi grade
-                $this->updateMetakognisiGrade($answerId, $type, $nilai);
+                $this->updateMetakognisiGrade($answerId, $type, $nilai, $studentIds);
             } else {
                 // Update regular grade
-                $this->updateRegularGrade($component, $answerId, $nilai, $materialId);
+                $this->updateRegularGrade($component, $answerId, $nilai, $materialId, $studentIds);
             }
             
             return response()->json([
@@ -432,7 +462,7 @@ class MateriLihatController extends Controller
     /**
      * Update regular component grade
      */
-    private function updateRegularGrade($component, $answerId, $nilai, $materialId)
+    private function updateRegularGrade($component, $answerId, $nilai, $materialId, array $studentIds = null)
     {
         $componentMapping = [
             'mulai_dari_diri' => [
@@ -463,49 +493,58 @@ class MateriLihatController extends Controller
         $updated = DB::table($table)
             ->where($pk, $answerId)
             ->where('id_materi', $materialId)
+            ->when(is_array($studentIds), function ($q) use ($studentIds) {
+                $q->whereIn('id_user', $studentIds);
+            })
             ->update([
                 'nilai' => $nilai,
                 'updated_at' => now()
             ]);
-            
+
         if (!$updated) {
             throw new \Exception('Jawaban tidak ditemukan');
         }
     }
-    
+
     /**
      * Update PRE grade
      */
-    private function updatePREGrade($answerId, $type, $nilai)
+    private function updatePREGrade($answerId, $type, $nilai, array $studentIds = null)
     {
         $nilaiField = 'nilai_' . $type;
-        
+
         $updated = DB::table('jawaban_perencanaan_refleksi_evaluasi')
             ->where('id_jawaban_perencanaan_refleksi_evaluasi', $answerId)
+            ->when(is_array($studentIds), function ($q) use ($studentIds) {
+                $q->whereIn('id_user', $studentIds);
+            })
             ->update([
                 $nilaiField => $nilai,
                 'updated_at' => now()
             ]);
-            
+
         if (!$updated) {
             throw new \Exception('Jawaban tidak ditemukan');
         }
     }
-    
+
     /**
      * Update metakognisi grade
      */
-    private function updateMetakognisiGrade($answerId, $type, $nilai)
+    private function updateMetakognisiGrade($answerId, $type, $nilai, array $studentIds = null)
     {
         $nilaiField = 'nilai_' . $type;
-        
+
         $updated = DB::table('jawaban_pengetahuan_metakognisi')
             ->where('id_jawaban_pengetahuan_metakognisi', $answerId)
+            ->when(is_array($studentIds), function ($q) use ($studentIds) {
+                $q->whereIn('id_user', $studentIds);
+            })
             ->update([
                 $nilaiField => $nilai,
                 'updated_at' => now()
             ]);
-            
+
         if (!$updated) {
             throw new \Exception('Jawaban tidak ditemukan');
         }

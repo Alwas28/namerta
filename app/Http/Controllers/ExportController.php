@@ -7,6 +7,20 @@ use Illuminate\Support\Facades\DB;
 
 class ExportController extends Controller
 {
+    /**
+     * id_user siswa yang terdaftar aktif di course ini. Materi dipakai lintas
+     * kelas, jadi tanpa ini ekspor nilai ikut memuat siswa kelas lain.
+     */
+    private function studentIdsForCourse($courseId)
+    {
+        return DB::table('siswa_kelas')
+            ->join('kelas_mp', 'kelas_mp.id_kelas_ta', '=', 'siswa_kelas.id_kelas_ta')
+            ->where('kelas_mp.id_kelas_mp', $courseId)
+            ->where('siswa_kelas.aktif', 'Y')
+            ->pluck('siswa_kelas.id_user')
+            ->all();
+    }
+
     public function exportNilaiMateri($courseId, $materialId, $component)
     {
         // Get material info
@@ -24,11 +38,11 @@ class ExportController extends Controller
         header("Pragma: no-cache");
         header("Expires: 0");
 
-        echo $this->generateExcelContent($material, $materialId, $component, $componentName);
+        echo $this->generateExcelContent($material, $materialId, $component, $componentName, $this->studentIdsForCourse($courseId));
         exit;
     }
 
-    private function generateExcelContent($material, $materialId, $component, $componentName)
+    private function generateExcelContent($material, $materialId, $component, $componentName, array $studentIds = null)
     {
         $html = '<!DOCTYPE html>';
         $html .= '<html>';
@@ -58,14 +72,14 @@ class ExportController extends Controller
         $html .= '<table>';
 
         if ($component === 'metakognisi') {
-            $html .= $this->generateMetakognisiTable($materialId);
+            $html .= $this->generateMetakognisiTable($materialId, $studentIds);
         } else {
             $isPRE = in_array($component, ['ruang_kolaborasi', 'refleksi_terbimbing', 'demonstrasi_konseptual', 'elaborasi_pemahaman']);
-            
+
             if ($isPRE) {
-                $html .= $this->generatePRETable($materialId, $component);
+                $html .= $this->generatePRETable($materialId, $component, $studentIds);
             } else {
-                $html .= $this->generateRegularTable($materialId, $component);
+                $html .= $this->generateRegularTable($materialId, $component, $studentIds);
             }
         }
 
@@ -76,7 +90,7 @@ class ExportController extends Controller
         return $html;
     }
 
-    private function generateMetakognisiTable($materialId)
+    private function generateMetakognisiTable($materialId, array $studentIds = null)
     {
         $html = '<thead>';
         $html .= '<tr>';
@@ -98,6 +112,9 @@ class ExportController extends Controller
             ->join('users as u', 'jpm.id_user', '=', 'u.id_user')
             ->join('profile as p', 'u.id_user', '=', 'p.id_user')
             ->where('ek.id_materi', $materialId)
+            ->when(is_array($studentIds), function ($q) use ($studentIds) {
+                $q->whereIn('jpm.id_user', $studentIds);
+            })
             ->select(
                 'p.nama as nama_siswa',
                 'p.nip_nis',
@@ -149,7 +166,7 @@ class ExportController extends Controller
         return $html;
     }
 
-    private function generatePRETable($materialId, $component)
+    private function generatePRETable($materialId, $component, array $studentIds = null)
     {
         $tableName = $this->getTableName($component);
 
@@ -178,6 +195,9 @@ class ExportController extends Controller
                      ->where('pre.jenis', '=', $component);
             })
             ->where('j.id_materi', $materialId)
+            ->when(is_array($studentIds), function ($q) use ($studentIds) {
+                $q->whereIn('j.id_user', $studentIds);
+            })
             ->select(
                 'p.nama as nama_siswa',
                 'p.nip_nis',
@@ -231,7 +251,7 @@ class ExportController extends Controller
         return $html;
     }
 
-    private function generateRegularTable($materialId, $component)
+    private function generateRegularTable($materialId, $component, array $studentIds = null)
     {
         $tableName = $this->getTableName($component);
 
@@ -252,6 +272,9 @@ class ExportController extends Controller
             ->join('users as u', 'j.id_user', '=', 'u.id_user')
             ->join('profile as p', 'u.id_user', '=', 'p.id_user')
             ->where('j.id_materi', $materialId)
+            ->when(is_array($studentIds), function ($q) use ($studentIds) {
+                $q->whereIn('j.id_user', $studentIds);
+            })
             ->select(
                 'p.nama as nama_siswa',
                 'p.nip_nis',

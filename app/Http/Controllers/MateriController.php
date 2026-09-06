@@ -49,8 +49,24 @@ class MateriController extends Controller
             ->where('siswa_kelas.id_user', $userId)
             ->where('siswa_kelas.aktif', 'Y')
             ->exists();
-            
+
         return $isStudent;
+    }
+
+    /**
+     * Daftar id_user siswa yang terdaftar aktif di course (kelas_mp) ini.
+     * Satu materi dipakai bersama oleh semua kelas dengan mata pelajaran yang
+     * sama, sedangkan tabel jawaban hanya berkunci id_materi + id_user. Tanpa
+     * pembatasan ini, guru akan melihat jawaban siswa dari kelas lain.
+     */
+    private function studentIdsForCourse($courseId)
+    {
+        return DB::table('siswa_kelas')
+            ->join('kelas_mp', 'kelas_mp.id_kelas_ta', '=', 'siswa_kelas.id_kelas_ta')
+            ->where('kelas_mp.id_kelas_mp', $courseId)
+            ->where('siswa_kelas.aktif', 'Y')
+            ->pluck('siswa_kelas.id_user')
+            ->all();
     }
     
     /**
@@ -397,6 +413,7 @@ class MateriController extends Controller
                 ->join('users', 'jawaban_pengetahuan_metakognisi.id_user', '=', 'users.id_user')
                 ->join('profile', 'users.id_user', '=', 'profile.id_user')
                 ->where('jawaban_pengetahuan_metakognisi.id_eksplorasi_konsep', $eksplorasiKonsep->id_eksplorasi_konsep)
+                ->whereIn('jawaban_pengetahuan_metakognisi.id_user', $this->studentIdsForCourse($courseId))
                 ->select(
                     'jawaban_pengetahuan_metakognisi.id_jawaban_pengetahuan_metakognisi as id',
                     'jawaban_pengetahuan_metakognisi.deklaratif',
@@ -461,6 +478,7 @@ class MateriController extends Controller
             // Update nilai
             $updated = DB::table('jawaban_pengetahuan_metakognisi')
                 ->where('id_jawaban_pengetahuan_metakognisi', $request->user_id)
+                ->whereIn('id_user', $this->studentIdsForCourse($courseId))
                 ->update([
                     $nilaiField => $request->nilai,
                     'updated_at' => now()
@@ -1169,6 +1187,7 @@ class MateriController extends Controller
             ->where('jawaban_perencanaan_refleksi_evaluasi.id_materi', $materialId)
             ->where('jawaban_perencanaan_refleksi_evaluasi.jenis', $component)
             ->whereNotNull('jawaban_perencanaan_refleksi_evaluasi.' . $type)
+            ->whereIn('jawaban_perencanaan_refleksi_evaluasi.id_user', $this->studentIdsForCourse($courseId))
             ->select(
                 'jawaban_perencanaan_refleksi_evaluasi.id_jawaban_perencanaan_refleksi_evaluasi as id',
                 'jawaban_perencanaan_refleksi_evaluasi.' . $type . ' as jawaban',
@@ -1216,6 +1235,7 @@ class MateriController extends Controller
                 ->where('id_jawaban_perencanaan_refleksi_evaluasi', $request->answer_id)
                 ->where('id_materi', $materialId)
                 ->where('jenis', $request->component)
+                ->whereIn('id_user', $this->studentIdsForCourse($courseId))
                 ->update([
                     $nilaiField => $nilaiValue,
                     'updated_at' => now()
@@ -1456,23 +1476,25 @@ public function gradeAnswerNumeric(Request $request, $courseId, $materialId)
             'primary_key' => $primaryKey
         ]);
         
-        // Check if the answer exists
+        // Check if the answer exists (dan milik siswa kelas ini)
         $exists = DB::table($table)
             ->where($primaryKey, $request->answer_id)
             ->where('id_materi', $materialId)
+            ->whereIn('id_user', $this->studentIdsForCourse($courseId))
             ->exists();
-            
+
         if (!$exists) {
             return response()->json([
                 'success' => false,
                 'message' => 'Jawaban tidak ditemukan'
             ], 404);
         }
-        
+
         // Update nilai
         $updated = DB::table($table)
             ->where($primaryKey, $request->answer_id)
             ->where('id_materi', $materialId)
+            ->whereIn('id_user', $this->studentIdsForCourse($courseId))
             ->update([
                 'nilai' => $request->nilai,
                 'updated_at' => now()
@@ -1580,6 +1602,7 @@ public function getStudentAnswers($courseId, $materialId, $component)
             ->join('users', $table . '.id_user', '=', 'users.id_user')
             ->join('profile', 'users.id_user', '=', 'profile.id_user')
             ->where($table . '.id_materi', $materialId)
+            ->whereIn($table . '.id_user', $this->studentIdsForCourse($courseId))
             ->select(
                 $table . '.' . $primaryKey . ' as id',
                 $table . '.jawaban',
@@ -1660,6 +1683,7 @@ public function getAnswerStatistics($courseId, $materialId, $component)
     try {
         $stats = DB::table($table)
             ->where('id_materi', $materialId)
+            ->whereIn('id_user', $this->studentIdsForCourse($courseId))
             ->selectRaw('
                 COUNT(*) as total,
                 COUNT(CASE WHEN nilai IS NOT NULL THEN 1 END) as graded,
